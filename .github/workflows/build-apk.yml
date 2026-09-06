@@ -27,52 +27,64 @@ jobs:
             zlib1g-dev libncurses5-dev libncursesw5-dev \
             cmake libffi-dev libssl-dev
 
-      - name: Verify Java
-        run: |
-          echo "JAVA_HOME=$JAVA_HOME"
-          java -version
-
       - name: Install Buildozer
         run: |
           python3 -m pip install --user --upgrade pip
           python3 -m pip install --user buildozer cython==0.29.36
 
       - name: Install Android SDK
+        shell: bash
         run: |
-          export JAVA_HOME="${JAVA_HOME}"
-          export PATH="$JAVA_HOME/bin:$PATH"
+          set -e
 
           SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
-          mkdir -p "$SDK_ROOT"
+          CMDLINE="$SDK_ROOT/cmdline-tools/latest"
+
+          mkdir -p "$CMDLINE"
 
           cd /tmp
-
           wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q commandlinetools-linux-11076708_latest.zip
 
-          mkdir -p cmdline-tools
-          unzip -q commandlinetools-linux-11076708_latest.zip -d cmdline-tools
+          cp -r cmdline-tools/* "$CMDLINE/"
 
-          mkdir -p "$SDK_ROOT/cmdline-tools"
-          mv cmdline-tools/cmdline-tools "$SDK_ROOT/cmdline-tools/latest"
+          export ANDROIDSDK="$SDK_ROOT"
+          export ANDROID_HOME="$SDK_ROOT"
+          export PATH="$CMDLINE/bin:$SDK_ROOT/platform-tools:$PATH"
 
-          export PATH="$SDK_ROOT/cmdline-tools/latest/bin:$SDK_ROOT/platform-tools:$PATH"
-
+          echo "sdkmanager:"
+          which sdkmanager
           sdkmanager --version
 
-          yes | sdkmanager --sdk_root="$SDK_ROOT" --licenses
+          mkdir -p "$SDK_ROOT/licenses"
+
+          yes | sdkmanager --sdk_root="$SDK_ROOT" --licenses > /tmp/licenses.log 2>&1 || true
+
+          echo "Installing required Android packages..."
 
           sdkmanager --sdk_root="$SDK_ROOT" \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-      - name: Build APK
+          echo "Checking Build-Tools..."
+          test -f "$SDK_ROOT/build-tools/35.0.0/aapt"
+          test -f "$SDK_ROOT/build-tools/35.0.0/aidl"
+
+          echo "Android SDK is ready."
+
+      - name: Configure Buildozer
         run: |
-          export JAVA_HOME="${JAVA_HOME}"
-          export PATH="$JAVA_HOME/bin:$HOME/.local/bin:$PATH"
+          if ! grep -q "^android.accept_sdk_license" buildozer.spec; then
+            sed -i '/^\[app\]/a android.accept_sdk_license = True' buildozer.spec
+          fi
+
+      - name: Build APK
+        shell: bash
+        run: |
           export ANDROIDSDK="$HOME/.buildozer/android/platform/android-sdk"
           export ANDROID_HOME="$ANDROIDSDK"
-          export PATH="$ANDROIDSDK/platform-tools:$ANDROIDSDK/build-tools/35.0.0:$PATH"
+          export PATH="$HOME/.local/bin:$ANDROIDSDK/platform-tools:$ANDROIDSDK/build-tools/35.0.0:$PATH"
 
           buildozer android debug
 
