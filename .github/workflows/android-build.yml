@@ -1,0 +1,148 @@
+name: Android APK Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git zip unzip wget curl \
+            autoconf automake libtool pkg-config \
+            zlib1g-dev libncurses5-dev libncursesw5-dev \
+            cmake libffi-dev libssl-dev \
+            gettext libltdl-dev
+
+      - name: Install Buildozer
+        run: |
+          python3 -m pip install --user --upgrade pip setuptools wheel
+          python3 -m pip install --user buildozer cython==0.29.36
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install Android SDK
+        shell: bash
+        run: |
+          set -e
+
+          SDK="$HOME/.buildozer/android/platform/android-sdk"
+
+          mkdir -p "$SDK"
+
+          cd /tmp
+
+          wget -q \
+            https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
+            -O android-tools.zip
+
+          unzip -q android-tools.zip
+
+          mkdir -p "$SDK/cmdline-tools/latest"
+
+          cp -r cmdline-tools/* "$SDK/cmdline-tools/latest/"
+
+          # Compatibility path required by Buildozer
+          mkdir -p "$SDK/tools"
+
+          ln -sfn \
+            "$SDK/cmdline-tools/latest" \
+            "$SDK/tools/bin"
+
+          echo "ANDROIDSDK=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+
+          echo "$SDK/tools/bin" >> "$GITHUB_PATH"
+          echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
+
+          echo "Checking SDK Manager..."
+          "$SDK/tools/bin/sdkmanager" --version
+
+          echo "Accepting licenses..."
+          yes | "$SDK/tools/bin/sdkmanager" \
+            --sdk_root="$SDK" \
+            --licenses || true
+
+          echo "Installing Android packages..."
+
+          "$SDK/tools/bin/sdkmanager" \
+            --sdk_root="$SDK" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+          echo "Checking Build Tools..."
+
+          test -f "$SDK/build-tools/35.0.0/aapt"
+          test -f "$SDK/build-tools/35.0.0/aidl"
+
+          echo "SDK installation complete."
+
+      - name: Configure Buildozer
+        run: |
+          if ! grep -q "^android.accept_sdk_license" buildozer.spec; then
+            sed -i \
+              '/^\[app\]/a android.accept_sdk_license = True' \
+              buildozer.spec
+          fi
+
+      - name: Build APK
+        shell: bash
+        run: |
+          set -e
+
+          export ANDROIDSDK="$HOME/.buildozer/android/platform/android-sdk"
+          export ANDROID_HOME="$ANDROIDSDK"
+
+          export PATH="$HOME/.local/bin:$ANDROIDSDK/tools/bin:$ANDROIDSDK/cmdline-tools/latest/bin:$ANDROIDSDK/platform-tools:$ANDROIDSDK/build-tools/35.0.0:$PATH"
+
+          echo "Java version:"
+          java -version
+
+          echo "Buildozer version:"
+          buildozer --version
+
+          echo "SDK Manager:"
+          "$ANDROIDSDK/tools/bin/sdkmanager" --version
+
+          echo "Starting Buildozer..."
+
+          buildozer android debug
+
+      - name: Verify APK
+        run: |
+          echo "Checking bin folder..."
+          ls -lah bin/
+
+          APK=$(find bin -type f -name "*.apk" | head -n 1)
+
+          if [ -z "$APK" ]; then
+            echo "❌ APK was not created."
+            exit 1
+          fi
+
+          echo "✅ APK created:"
+          echo "$APK"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyMusic-APK
+          path: bin/*.apk
+          if-no-files-found: error
