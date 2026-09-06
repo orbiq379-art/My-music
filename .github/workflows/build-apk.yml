@@ -8,10 +8,10 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout
+      - name: Checkout project
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -25,10 +25,32 @@ jobs:
           python3 -m pip install --user --upgrade pip
           python3 -m pip install --user buildozer cython==0.29.36
 
+      - name: Install Android SDK and accept licenses
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+
+          buildozer android debug 2>&1 | tee initial-build.log &
+          BUILD_PID=$!
+
+          sleep 30
+
+          SDKMANAGER=$(find "$HOME/.buildozer" -name sdkmanager -type f 2>/dev/null | head -1)
+
+          if [ -n "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --licenses || true
+            "$SDKMANAGER" "build-tools;37.0.0" "platform-tools" || true
+          fi
+
+          wait $BUILD_PID
+
       - name: Build APK
         run: |
           export PATH="$HOME/.local/bin:$PATH"
           buildozer android debug
+
+      - name: Show APK
+        run: |
+          ls -lah bin/
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
