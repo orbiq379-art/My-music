@@ -11,7 +11,7 @@ jobs:
       - name: Checkout project
         uses: actions/checkout@v4
 
-      - name: Install system dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -22,14 +22,21 @@ jobs:
             zlib1g-dev libncurses5-dev libncursesw5-dev \
             cmake libffi-dev libssl-dev
 
+      - name: Set Java 17
+        run: |
+          JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))
+          echo "JAVA_HOME=$JAVA_HOME" >> $GITHUB_ENV
+          echo "$JAVA_HOME/bin" >> $GITHUB_PATH
+          java -version
+
       - name: Install Buildozer
         run: |
           python3 -m pip install --user --upgrade pip
           python3 -m pip install --user buildozer cython==0.29.36
 
-      - name: Prepare Android SDK
+      - name: Install Android SDK
         run: |
-          mkdir -p "$HOME/.buildozer/android/platform/android-sdk"
+          mkdir -p "$HOME/.buildozer/android/platform"
           cd "$HOME/.buildozer/android/platform"
 
           wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
@@ -41,6 +48,8 @@ jobs:
           rm commandlinetools-linux-11076708_latest.zip
 
           export ANDROIDSDK="$HOME/.buildozer/android/platform/android-sdk"
+          mkdir -p "$ANDROIDSDK"
+
           export PATH="$HOME/.buildozer/android/platform/cmdline-tools/latest/bin:$ANDROIDSDK/platform-tools:$PATH"
 
           yes | sdkmanager --sdk_root="$ANDROIDSDK" --licenses
@@ -52,10 +61,9 @@ jobs:
 
       - name: Build APK
         run: |
-          export PATH="$HOME/.local/bin:$PATH"
           export ANDROIDSDK="$HOME/.buildozer/android/platform/android-sdk"
           export ANDROID_HOME="$ANDROIDSDK"
-          export PATH="$ANDROIDSDK/platform-tools:$ANDROIDSDK/build-tools/35.0.0:$PATH"
+          export PATH="$HOME/.local/bin:$ANDROIDSDK/platform-tools:$ANDROIDSDK/build-tools/35.0.0:$PATH"
 
           buildozer android debug
 
