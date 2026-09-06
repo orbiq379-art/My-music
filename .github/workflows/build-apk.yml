@@ -15,8 +15,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            git zip unzip openjdk-17-jdk \
-            python3-pip autoconf libtool pkg-config \
+            git zip unzip wget curl \
+            openjdk-17-jdk \
+            python3-pip \
+            autoconf libtool pkg-config \
             zlib1g-dev libncurses5-dev libncursesw5-dev \
             cmake libffi-dev libssl-dev
 
@@ -25,30 +27,39 @@ jobs:
           python3 -m pip install --user --upgrade pip
           python3 -m pip install --user buildozer cython==0.29.36
 
-      - name: Install Android SDK and accept licenses
+      - name: Prepare Android SDK
         run: |
-          export PATH="$HOME/.local/bin:$PATH"
+          mkdir -p "$HOME/.buildozer/android/platform/android-sdk"
+          cd "$HOME/.buildozer/android/platform"
 
-          buildozer android debug 2>&1 | tee initial-build.log &
-          BUILD_PID=$!
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
 
-          sleep 30
+          mkdir -p cmdline-tools
+          unzip -q commandlinetools-linux-11076708_latest.zip -d cmdline-tools
 
-          SDKMANAGER=$(find "$HOME/.buildozer" -name sdkmanager -type f 2>/dev/null | head -1)
+          mv cmdline-tools/cmdline-tools cmdline-tools/latest
+          rm commandlinetools-linux-11076708_latest.zip
 
-          if [ -n "$SDKMANAGER" ]; then
-            yes | "$SDKMANAGER" --licenses || true
-            "$SDKMANAGER" "build-tools;37.0.0" "platform-tools" || true
-          fi
+          export ANDROIDSDK="$HOME/.buildozer/android/platform/android-sdk"
+          export PATH="$HOME/.buildozer/android/platform/cmdline-tools/latest/bin:$ANDROIDSDK/platform-tools:$PATH"
 
-          wait $BUILD_PID
+          yes | sdkmanager --sdk_root="$ANDROIDSDK" --licenses
+
+          sdkmanager --sdk_root="$ANDROIDSDK" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
       - name: Build APK
         run: |
           export PATH="$HOME/.local/bin:$PATH"
+          export ANDROIDSDK="$HOME/.buildozer/android/platform/android-sdk"
+          export ANDROID_HOME="$ANDROIDSDK"
+          export PATH="$ANDROIDSDK/platform-tools:$ANDROIDSDK/build-tools/35.0.0:$PATH"
+
           buildozer android debug
 
-      - name: Show APK
+      - name: Check APK
         run: |
           ls -lah bin/
 
