@@ -33,7 +33,7 @@ jobs:
       - name: Install Buildozer
         run: |
           python3 -m pip install --user --upgrade pip setuptools wheel
-          python3 -m pip install --user buildozer cython==0.29.36
+          python3 -m pip install --user buildozer==1.5.0 cython==0.29.36
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install Android SDK
@@ -42,10 +42,11 @@ jobs:
           set -e
 
           SDK="$HOME/.buildozer/android/platform/android-sdk"
-          TOOLS="$SDK/cmdline-tools/latest"
+          MODERN="$SDK/cmdline-tools/latest"
+          LEGACY="$SDK/tools"
 
           rm -rf "$SDK"
-          mkdir -p "$TOOLS"
+          mkdir -p "$MODERN"
 
           cd /tmp
 
@@ -55,18 +56,30 @@ jobs:
 
           unzip -q android-tools.zip
 
-          cp -r cmdline-tools/* "$TOOLS/"
+          # Modern location: what standard tooling and PATH conventions expect.
+          cp -r cmdline-tools/* "$MODERN/"
 
-          # Tell GitHub Actions where the SDK is
+          # --- The actual fix ---
+          # Buildozer's own sdkmanager_path property is hardcoded to look at
+          # <sdk>/tools/bin/sdkmanager. There is no fallback to cmdline-tools
+          # anywhere in Buildozer's source (verified against buildozer/targets/
+          # android.py), and this is true across every Buildozer version, not
+          # just old ones. A symlink alone is fragile here because sdkmanager's
+          # launcher script also needs its lib/*.jar files sitting alongside it
+          # in the same directory, so we physically duplicate the whole
+          # cmdline-tools payload (bin + lib together) into the legacy path.
+          mkdir -p "$LEGACY"
+          cp -r "$MODERN"/. "$LEGACY/"
+
           echo "ANDROIDSDK=$SDK" >> "$GITHUB_ENV"
           echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
 
-          echo "$TOOLS/bin" >> "$GITHUB_PATH"
+          echo "$MODERN/bin" >> "$GITHUB_PATH"
           echo "$SDK/platform-tools" >> "$GITHUB_PATH"
 
-          SDKMANAGER="$TOOLS/bin/sdkmanager"
+          SDKMANAGER="$LEGACY/bin/sdkmanager"
 
-          echo "Checking sdkmanager..."
+          echo "Checking sdkmanager (legacy path Buildozer actually uses)..."
           test -f "$SDKMANAGER"
 
           "$SDKMANAGER" --version
@@ -90,15 +103,37 @@ jobs:
           test -f "$SDK/build-tools/35.0.0/aapt"
           test -f "$SDK/build-tools/35.0.0/aidl"
 
-          echo "✅ Android SDK installed successfully."
+          echo "âœ… Android SDK installed successfully (modern + legacy layout present)."
 
-      - name: Configure Buildozer
+      - name: Diagnostics
+        shell: bash
         run: |
-          if ! grep -q "^android.accept_sdk_license" buildozer.spec; then
-            sed -i \
-              '/^\[app\]/a android.accept_sdk_license = True' \
-              buildozer.spec
-          fi
+          SDK="$HOME/.buildozer/android/platform/android-sdk"
+
+          echo "Java:"
+          java -version
+
+          echo "Python:"
+          python3 --version
+
+          echo "Buildozer:"
+          buildozer --version
+
+          echo "Legacy sdkmanager (what Buildozer actually calls):"
+          "$SDK/tools/bin/sdkmanager" --version
+          echo "-> $SDK/tools/bin/sdkmanager"
+
+          echo "Modern sdkmanager (standard location):"
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" --version
+          echo "-> $SDK/cmdline-tools/latest/bin/sdkmanager"
+
+          echo "Android SDK location: $SDK"
+
+          echo "Installed build-tools:"
+          ls "$SDK/build-tools" || true
+
+          echo "Installed platforms:"
+          ls "$SDK/platforms" || true
 
       - name: Build APK
         shell: bash
@@ -110,16 +145,7 @@ jobs:
 
           export PATH="$HOME/.local/bin:$ANDROIDSDK/cmdline-tools/latest/bin:$ANDROIDSDK/platform-tools:$PATH"
 
-          echo "Java:"
-          java -version
-
-          echo "Buildozer:"
-          buildozer --version
-
-          echo "SDK Manager:"
-          "$ANDROIDSDK/cmdline-tools/latest/bin/sdkmanager" --version
-
-          echo "🚀 Building APK..."
+          echo "ðŸš€ Building APK..."
 
           buildozer android debug
 
@@ -131,11 +157,11 @@ jobs:
           find bin -type f -name "*.apk" -print
 
           if ! find bin -type f -name "*.apk" | grep -q .; then
-            echo "❌ APK was not created."
+            echo "âŒ APK was not created."
             exit 1
           fi
 
-          echo "✅ APK successfully created!"
+          echo "âœ… APK successfully created!"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -143,3 +169,7 @@ jobs:
           name: MyMusic-APK
           path: bin/*.apk
           if-no-files-found: error
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyMusic-APK
+    
